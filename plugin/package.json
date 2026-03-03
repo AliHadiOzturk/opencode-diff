@@ -1,6 +1,6 @@
 {
   "name": "opencode-diff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Interactive diff viewer plugin for OpenCode with vim-style navigation, granular change acceptance, and beautiful terminal UI",
   "main": "dist/index.js",
   "bin": {

@@ -2,6 +2,10 @@ import type { PluginInput } from '@opencode-ai/plugin';
 import { ChangeQueue, changeQueue, InterceptedError, PendingChange } from './state-manager.js';
 import type { ConfigManager } from './config.js';
 import { createLogger } from './debug.js';
+import { DiffEngine } from './diff-engine.js';
+import { TUIRenderer } from './ui/tui-renderer.js';
+import { KeyboardHandler } from './ui/keyboard-handler.js';
+import readline from 'readline';
 
 const logger = createLogger('Interceptor');
 type BunShell = PluginInput['$'];
@@ -68,11 +72,20 @@ export class ToolInterceptor {
       pendingCount,
     });
 
-    throw new InterceptedError(
-      `Tool '${tool}' for '${filePath}' intercepted by DiffPlugin`,
-      change.id,
-      filePath
-    );
+    const action = await this.showDiffUI(change);
+    
+    if (action === 'accept') {
+      logger.info('Change accepted, applying...');
+      return; // Allow the tool to proceed
+    } else {
+      logger.info('Change rejected, removing from queue...');
+      this.context.changeQueue.remove(change.id);
+      throw new InterceptedError(
+        `Tool '${tool}' for '${filePath}' rejected by user`,
+        change.id,
+        filePath
+      );
+    }
   }
 
   async after(tool: string): Promise<void> {
@@ -127,6 +140,56 @@ export class ToolInterceptor {
       return filePath;
     }
     return `${this.context.directory}/${filePath}`;
+  }
+
+  private async showDiffUI(change: PendingChange): Promise<'accept' | 'reject'> {
+    const diffEngine = new DiffEngine({ contextLines: 3, ignoreWhitespace: false });
+    const diffText = diffEngine.generateDiff(
+      change.filePath,
+      change.filePath,
+      change.oldContent,
+      change.newContent
+    );
+    const parsedDiffs = diffEngine.parseDiff(diffText);
+    
+    if (parsedDiffs.length === 0) {
+      return 'accept';
+    }
+
+    const renderer = new TUIRenderer({ theme: 'dark', showToolbar: true, showFooter: true });
+    const diff = parsedDiffs[0];
+    
+    console.clear();
+    console.log(renderer.render(diff));
+    console.log('\n[Actions] (a)ccept, (r)eject, (q)uit');
+
+    return new Promise((resolve) => {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const ask = () => {
+        rl.question('Choice: ', (answer) => {
+          const choice = answer.trim().toLowerCase();
+          if (choice === 'a' || choice === 'accept') {
+            rl.close();
+            resolve('accept');
+          } else if (choice === 'r' || choice === 'reject') {
+            rl.close();
+            resolve('reject');
+          } else if (choice === 'q' || choice === 'quit') {
+            rl.close();
+            resolve('reject');
+          } else {
+            console.log('Invalid choice. Use a, r, or q');
+            ask();
+          }
+        });
+      };
+
+      ask();
+    });
   }
 }
 

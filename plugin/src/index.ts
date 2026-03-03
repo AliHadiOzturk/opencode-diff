@@ -107,10 +107,3 @@ export async function DiffPlugin(context: PluginInput) {
 
 // Re-export types for consumers
 export type { PluginConfig, KeybindingConfig, ConfigValidationError } from './config.js';
-export { ConfigManager, DEFAULT_CONFIG } from './config.js';
-
-// Export interceptor utilities for testing
-export { createBeforeHandler, createAfterHandler } from './interceptor.js';
-export { changeQueue, InterceptedError, type PendingChange } from './state-manager.js';
-
-export default DiffPlugin;
