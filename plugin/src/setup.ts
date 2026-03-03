@@ -145,7 +145,7 @@ function setupOpenCodeJson(dryRun: boolean): void {
 
   let config: {
     $schema?: string;
-    plugins?: string[];
+    plugin?: string[];
     [key: string]: unknown;
   } = {};
 
@@ -158,11 +158,11 @@ function setupOpenCodeJson(dryRun: boolean): void {
       error(`Failed to parse ${opencodePath}: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    if (!config.plugins) {
-      config.plugins = [];
+    if (!config.plugin) {
+      config.plugin = [];
     }
 
-    const isPluginInstalled = config.plugins.some(
+    const isPluginInstalled = config.plugin.some(
       (plugin: string) => plugin === PLUGIN_NAME || plugin.startsWith(`${PLUGIN_NAME}@`)
     );
 
@@ -171,7 +171,7 @@ function setupOpenCodeJson(dryRun: boolean): void {
       return;
     }
 
-    config.plugins.push(pluginEntry);
+    config.plugin.push(pluginEntry);
 
     if (dryRun) {
       log(`[DRY-RUN] Would add ${PLUGIN_NAME} to ${opencodePath}`);
@@ -187,7 +187,7 @@ function setupOpenCodeJson(dryRun: boolean): void {
     }
 
     config = {
-      plugins: [pluginEntry],
+      plugin: [pluginEntry],
     };
 
     writeFileSync(opencodePath, JSON.stringify(config, null, 2), 'utf-8');

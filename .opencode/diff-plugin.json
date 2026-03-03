@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "ide": {
-    "enabled": false,
+    "enabled": true,
     "stateFilePath": ".opencode/.diff-plugin-state.json"
   },
   "autoAccept": [
