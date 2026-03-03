@@ -1,0 +1,981 @@
+/**
+ * TUI Diff Renderer
+ * 
+ * Renders unified diffs in a beautiful terminal UI with:
+ * - Header with file path and statistics
+ * - Toolbar with action buttons
+ * - Line numbers (old and new)
+ * - Color coding (green for added, red for removed)
+ * - Footer with keyboard shortcuts
+ * - Scrolling support for long diffs
+ * - Light and dark theme support
+ */
+
+import chalk, { ChalkInstance } from 'chalk';
+import { ParsedDiff, Hunk, DiffLine } from '../diff-engine.js';
+import { PendingChange } from '../state-manager.js';
+
+/**
+ * Theme configuration for light and dark terminals
+ */
+export interface TUITheme {
+  name: 'light' | 'dark';
+  headerBg: ChalkInstance;
+  headerText: ChalkInstance;
+  headerPath: ChalkInstance;
+  toolbarBg: ChalkInstance;
+  toolbarText: ChalkInstance;
+  toolbarActive: ChalkInstance;
+  addedLine: ChalkInstance;
+  addedLineBg: ChalkInstance;
+  deletedLine: ChalkInstance;
+  deletedLineBg: ChalkInstance;
+  unchangedLine: ChalkInstance;
+  lineNumber: ChalkInstance;
+  lineNumberActive: ChalkInstance;
+  hunkHeader: ChalkInstance;
+  hunkHeaderBg: ChalkInstance;
+  separator: ChalkInstance;
+  footerBg: ChalkInstance;
+  footerText: ChalkInstance;
+  footerShortcut: ChalkInstance;
+  statsAdded: ChalkInstance;
+  statsDeleted: ChalkInstance;
+  statsModified: ChalkInstance;
+}
+
+/**
+ * Predefined themes for the TUI renderer
+ */
+export const THEMES: Record<'light' | 'dark', TUITheme> = {
+  dark: {
+    name: 'dark',
+    headerBg: chalk.bgHex('#1e1e1e'),
+    headerText: chalk.hex('#cccccc'),
+    headerPath: chalk.hex('#4fc1ff').bold,
+    toolbarBg: chalk.bgHex('#2d2d2d'),
+    toolbarText: chalk.hex('#858585'),
+    toolbarActive: chalk.hex('#ffffff').bold,
+    addedLine: chalk.hex('#7ee787'),
+    addedLineBg: chalk.bgHex('#0d2a0d'),
+    deletedLine: chalk.hex('#ff7b72'),
+    deletedLineBg: chalk.bgHex('#2d0a0a'),
+    unchangedLine: chalk.hex('#cccccc'),
+    lineNumber: chalk.hex('#6e7681'),
+    lineNumberActive: chalk.hex('#8b949e'),
+    hunkHeader: chalk.hex('#d2a8ff'),
+    hunkHeaderBg: chalk.bgHex('#1e1e1e'),
+    separator: chalk.hex('#484f58'),
+    footerBg: chalk.bgHex('#1e1e1e'),
+    footerText: chalk.hex('#8b949e'),
+    footerShortcut: chalk.hex('#79c0ff').bold,
+    statsAdded: chalk.hex('#3fb950').bold,
+    statsDeleted: chalk.hex('#f85149').bold,
+    statsModified: chalk.hex('#d29922').bold,
+  },
+  light: {
+    name: 'light',
+    headerBg: chalk.bgHex('#f6f8fa'),
+    headerText: chalk.hex('#24292f'),
+    headerPath: chalk.hex('#0969da').bold,
+    toolbarBg: chalk.bgHex('#eaeef2'),
+    toolbarText: chalk.hex('#656d76'),
+    toolbarActive: chalk.hex('#24292f').bold,
+    addedLine: chalk.hex('#1a7f37'),
+    addedLineBg: chalk.bgHex('#dafbe1'),
+    deletedLine: chalk.hex('#cf222e'),
+    deletedLineBg: chalk.bgHex('#ffebe9'),
+    unchangedLine: chalk.hex('#24292f'),
+    lineNumber: chalk.hex('#8c959f'),
+    lineNumberActive: chalk.hex('#6e7781'),
+    hunkHeader: chalk.hex('#8250df'),
+    hunkHeaderBg: chalk.bgHex('#f6f8fa'),
+    separator: chalk.hex('#d0d7de'),
+    footerBg: chalk.bgHex('#f6f8fa'),
+    footerText: chalk.hex('#656d76'),
+    footerShortcut: chalk.hex('#0969da').bold,
+    statsAdded: chalk.hex('#1a7f37').bold,
+    statsDeleted: chalk.hex('#cf222e').bold,
+    statsModified: chalk.hex('#9a6700').bold,
+  },
+};
+
+/**
+ * Configuration options for TUIRenderer
+ */
+export interface TUIRendererConfig {
+  theme: 'light' | 'dark' | TUITheme;
+  lineNumbers: boolean;
+  showToolbar: boolean;
+  showFooter: boolean;
+  contextLines: number;
+  maxLineLength: number;
+  scrollOffset: number;
+}
+
+/**
+ * Action button definition for toolbar
+ */
+export interface ActionButton {
+  key: string;
+  label: string;
+  shortcut: string;
+  active?: boolean;
+  destructive?: boolean;
+}
+
+/**
+ * Bulk action button definition for bulk operations toolbar
+ */
+export interface BulkActionButton extends ActionButton {
+  action: 'acceptAll' | 'rejectAll' | 'acceptFile' | 'rejectFile' | 'acceptHunk' | 'rejectHunk';
+}
+
+/**
+ * Stats display for showing change statistics
+ */
+export interface StatsDisplay {
+  accepted: number;
+  rejected: number;
+  pending: number;
+  total: number;
+  percentageComplete: number;
+}
+
+/**
+ * Render statistics for a diff
+ */
+export interface DiffStats {
+  additions: number;
+  deletions: number;
+  changes: number;
+  fileStatus: 'added' | 'modified' | 'deleted' | 'renamed' | 'unchanged';
+}
+
+/**
+ * TUIRenderer - Terminal UI Diff Renderer
+ *
+ * Renders diffs in a beautiful terminal interface with full scrolling support,
+ * line numbers, color coding, and customizable themes.
+ */
+export class TUIRenderer {
+  private config: TUIRendererConfig;
+  private theme: TUITheme;
+  private terminalWidth: number;
+  private terminalHeight: number;
+  private scrollPosition: number;
+  private actionButtons: ActionButton[];
+  private bulkActionButtons: BulkActionButton[];
+  private pendingChange: PendingChange | null = null;
+  private currentHunkIndex: number = 0;
+  private confirmationDialog: { show: boolean; action: string; message: string } | null = null;
+  private onBulkActionCallback?: (action: string, hunkIndex?: number) => void;
+
+  constructor(config: Partial<TUIRendererConfig> = {}) {
+    this.config = {
+      theme: 'dark',
+      lineNumbers: true,
+      showToolbar: true,
+      showFooter: true,
+      contextLines: 3,
+      maxLineLength: 120,
+      scrollOffset: 0,
+      ...config,
+    };
+
+    this.theme = this.resolveTheme(this.config.theme);
+    this.terminalWidth = this.getTerminalWidth();
+    this.terminalHeight = this.getTerminalHeight();
+    this.scrollPosition = 0;
+    this.actionButtons = this.getDefaultActionButtons();
+    this.bulkActionButtons = this.getDefaultBulkActionButtons();
+  }
+
+  /**
+   * Set the pending change for bulk actions
+   */
+  setPendingChange(change: PendingChange | null): void {
+    this.pendingChange = change;
+  }
+
+  /**
+   * Get the current pending change
+   */
+  getPendingChange(): PendingChange | null {
+    return this.pendingChange;
+  }
+
+  /**
+   * Set current hunk index for hunk-level actions
+   */
+  setCurrentHunkIndex(index: number): void {
+    this.currentHunkIndex = index;
+  }
+
+  /**
+   * Get current hunk index
+   */
+  getCurrentHunkIndex(): number {
+    return this.currentHunkIndex;
+  }
+
+  /**
+   * Set callback for bulk actions
+   */
+  setOnBulkActionCallback(callback: (action: string, hunkIndex?: number) => void): void {
+    this.onBulkActionCallback = callback;
+  }
+
+  /**
+   * Resolve theme from string or object
+   */
+  private resolveTheme(theme: 'light' | 'dark' | TUITheme): TUITheme {
+    if (typeof theme === 'string') {
+      return THEMES[theme];
+    }
+    return theme;
+  }
+
+  /**
+   * Get terminal width
+   */
+  private getTerminalWidth(): number {
+    return process.stdout.columns || 120;
+  }
+
+  /**
+   * Get terminal height
+   */
+  private getTerminalHeight(): number {
+    return process.stdout.rows || 40;
+  }
+
+  /**
+   * Get default action buttons
+   */
+  private getDefaultActionButtons(): ActionButton[] {
+    return [
+      { key: 'apply', label: 'Apply', shortcut: 'Enter', active: true },
+      { key: 'skip', label: 'Skip', shortcut: 's' },
+      { key: 'next', label: 'Next', shortcut: 'n' },
+      { key: 'prev', label: 'Previous', shortcut: 'p' },
+      { key: 'quit', label: 'Quit', shortcut: 'q' },
+    ];
+  }
+
+  /**
+   * Get default bulk action buttons
+   */
+  private getDefaultBulkActionButtons(): BulkActionButton[] {
+    return [
+      { key: 'acceptAll', label: 'Accept All', shortcut: 'A', action: 'acceptAll' },
+      { key: 'rejectAll', label: 'Reject All', shortcut: 'R', action: 'rejectAll', destructive: true },
+      { key: 'acceptFile', label: 'Accept File', shortcut: 'F', action: 'acceptFile' },
+      { key: 'rejectFile', label: 'Reject File', shortcut: 'D', action: 'rejectFile', destructive: true },
+      { key: 'acceptHunk', label: 'Accept Hunk', shortcut: 'H', action: 'acceptHunk' },
+      { key: 'rejectHunk', label: 'Reject Hunk', shortcut: 'K', action: 'rejectHunk', destructive: true },
+    ];
+  }
+
+  /**
+   * Set bulk action buttons
+   */
+  setBulkActionButtons(buttons: BulkActionButton[]): void {
+    this.bulkActionButtons = buttons;
+  }
+
+  /**
+   * Get bulk action buttons
+   */
+  getBulkActionButtons(): BulkActionButton[] {
+    return this.bulkActionButtons;
+  }
+
+  /**
+   * Update configuration
+   */
+  setConfig(config: Partial<TUIRendererConfig>): void {
+    this.config = { ...this.config, ...config };
+    if (config.theme) {
+      this.theme = this.resolveTheme(config.theme);
+    }
+  }
+
+  /**
+   * Set action buttons
+   */
+  setActionButtons(buttons: ActionButton[]): void {
+    this.actionButtons = buttons;
+  }
+
+  /**
+   * Calculate diff statistics
+   */
+  calculateStats(diff: ParsedDiff): DiffStats {
+    let additions = 0;
+    let deletions = 0;
+
+    for (const hunk of diff.hunks) {
+      for (const line of hunk.lines) {
+        if (line.type === 'added') additions++;
+        if (line.type === 'deleted') deletions++;
+      }
+    }
+
+    return {
+      additions,
+      deletions,
+      changes: additions + deletions,
+      fileStatus: diff.status,
+    };
+  }
+
+  /**
+   * Get change statistics from pending change
+   */
+  getChangeStats(): StatsDisplay | null {
+    if (!this.pendingChange) {
+      return null;
+    }
+
+    const stats = this.pendingChange.getStats();
+    return {
+      accepted: stats.accepted,
+      rejected: stats.rejected,
+      pending: stats.pending,
+      total: stats.total,
+      percentageComplete: stats.percentageAccepted + stats.percentageRejected,
+    };
+  }
+
+  /**
+   * Render the complete diff view
+   */
+  render(diff: ParsedDiff): string {
+    this.terminalWidth = this.getTerminalWidth();
+    this.terminalHeight = this.getTerminalHeight();
+
+    const lines: string[] = [];
+    const stats = this.calculateStats(diff);
+
+    // Render header
+    lines.push(this.renderHeader(diff, stats));
+
+    // Render toolbar
+    if (this.config.showToolbar) {
+      lines.push(this.renderToolbar());
+      lines.push(this.renderBulkToolbar());
+      lines.push(this.renderStatsDisplay());
+    }
+
+    // Render separator
+    lines.push(this.renderSeparator());
+
+    // Render diff content with scrolling
+    const contentLines = this.renderDiffContent(diff);
+    const visibleLines = this.getVisibleContentLines(contentLines);
+    lines.push(...visibleLines);
+
+    // Render footer
+    if (this.config.showFooter) {
+      lines.push(this.renderFooter(contentLines.length));
+    }
+
+    if (this.confirmationDialog?.show) {
+      lines.push(this.renderConfirmationDialog());
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Render header with file path and stats
+   */
+  renderHeader(diff: ParsedDiff, stats?: DiffStats): string {
+    const theme = this.theme;
+    stats = stats || this.calculateStats(diff);
+
+    const path = diff.newPath || diff.oldPath || 'unknown';
+    const statusIcon = this.getStatusIcon(diff.status);
+
+    // Build header parts
+    const parts: string[] = [];
+    
+    // File path
+    parts.push(theme.headerPath(`${statusIcon} ${path}`));
+    
+    // Stats
+    const statsParts: string[] = [];
+    if (stats.additions > 0) {
+      statsParts.push(theme.statsAdded(`+${stats.additions}`));
+    }
+    if (stats.deletions > 0) {
+      statsParts.push(theme.statsDeleted(`-${stats.deletions}`));
+    }
+    if (statsParts.length > 0) {
+      parts.push(theme.headerText(' | ') + statsParts.join(theme.headerText(', ')));
+    }
+
+    // Language tag
+    if (diff.language) {
+      parts.push(theme.headerText(`(${diff.language})`));
+    }
+
+    const headerText = parts.join(' ');
+    const padding = this.terminalWidth - this.stripAnsi(headerText).length - 2;
+    
+    return theme.headerBg(
+      ' ' + headerText + ' '.repeat(Math.max(0, padding)) + ' '
+    );
+  }
+
+  /**
+   * Get status icon
+   */
+  private getStatusIcon(status: string): string {
+    switch (status) {
+      case 'added': return 'A';
+      case 'deleted': return 'D';
+      case 'modified': return 'M';
+      case 'renamed': return 'R';
+      default: return ' ';
+    }
+  }
+
+  /**
+   * Get status color
+   */
+  private getStatusColor(status: string): ChalkInstance {
+    switch (status) {
+      case 'added': return this.theme.statsAdded;
+      case 'deleted': return this.theme.statsDeleted;
+      case 'modified': return this.theme.statsModified;
+      default: return this.theme.headerText;
+    }
+  }
+
+  /**
+   * Render toolbar with action buttons
+   */
+  renderToolbar(): string {
+    const theme = this.theme;
+    const buttons = this.actionButtons.map(btn => {
+      const shortcut = theme.footerShortcut(`[${btn.shortcut}]`);
+      const label = btn.active
+        ? theme.toolbarActive(btn.label)
+        : theme.toolbarText(btn.label);
+      return `${shortcut} ${label}`;
+    });
+
+    const toolbarText = buttons.join(theme.toolbarText(' │ '));
+    const padding = this.terminalWidth - this.stripAnsi(toolbarText).length - 2;
+
+    return theme.toolbarBg(
+      ' ' + toolbarText + ' '.repeat(Math.max(0, padding)) + ' '
+    );
+  }
+
+  /**
+   * Render bulk actions toolbar
+   */
+  renderBulkToolbar(): string {
+    const theme = this.theme;
+    const buttons = this.bulkActionButtons.map(btn => {
+      const shortcut = theme.footerShortcut(`[${btn.shortcut}]`);
+      const label = btn.destructive
+        ? theme.statsDeleted(btn.label)
+        : theme.statsAdded(btn.label);
+      return `${shortcut} ${label}`;
+    });
+
+    const toolbarText = buttons.join(theme.toolbarText(' │ '));
+    const padding = this.terminalWidth - this.stripAnsi(toolbarText).length - 2;
+
+    return theme.toolbarBg(
+      ' ' + toolbarText + ' '.repeat(Math.max(0, padding)) + ' '
+    );
+  }
+
+  /**
+   * Render statistics display
+   */
+  renderStatsDisplay(): string {
+    const theme = this.theme;
+    const stats = this.getChangeStats();
+
+    if (!stats || stats.total === 0) {
+      const emptyText = ' No changes to review ';
+      const padding = this.terminalWidth - emptyText.length - 2;
+      return theme.toolbarBg(' ' + emptyText + ' '.repeat(Math.max(0, padding)) + ' ');
+    }
+
+    const parts: string[] = [];
+    parts.push(theme.statsAdded(`${stats.accepted} accepted`));
+    parts.push(theme.statsDeleted(`${stats.rejected} rejected`));
+    parts.push(theme.headerText(`${stats.pending} pending`));
+    parts.push(theme.headerText(`${stats.percentageComplete}% complete`));
+
+    const statsText = parts.join(theme.toolbarText(' │ '));
+    const padding = this.terminalWidth - this.stripAnsi(statsText).length - 2;
+
+    return theme.toolbarBg(
+      ' ' + statsText + ' '.repeat(Math.max(0, padding)) + ' '
+    );
+  }
+
+  /**
+   * Render separator line
+   */
+  renderSeparator(): string {
+    return this.theme.separator('─'.repeat(this.terminalWidth));
+  }
+
+  /**
+   * Render diff content with hunks and lines
+   */
+  renderDiffContent(diff: ParsedDiff): string[] {
+    const lines: string[] = [];
+    
+    for (const hunk of diff.hunks) {
+      lines.push(this.renderHunkHeader(hunk));
+      
+      for (let i = 0; i < hunk.lines.length; i++) {
+        const line = hunk.lines[i];
+        lines.push(this.renderDiffLine(line, i));
+      }
+      
+      // Add spacing between hunks
+      lines.push('');
+    }
+
+    return lines;
+  }
+
+  /**
+   * Render hunk header
+   */
+  renderHunkHeader(hunk: Hunk): string {
+    const theme = this.theme;
+    const header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+    
+    return theme.hunkHeaderBg(
+      '  ' + theme.hunkHeader(header) + '  '
+    );
+  }
+
+  /**
+   * Render a single diff line with line numbers
+   */
+  renderDiffLine(line: DiffLine, _index: number): string {
+    const theme = this.theme;
+    const prefix = this.getLinePrefix(line.type);
+    
+    // Build line numbers
+    let lineNumbers = '';
+    if (this.config.lineNumbers) {
+      const oldNum = line.oldLineNumber !== undefined 
+        ? String(line.oldLineNumber).padStart(4, ' ')
+        : '    ';
+      const newNum = line.newLineNumber !== undefined 
+        ? String(line.newLineNumber).padStart(4, ' ')
+        : '    ';
+      lineNumbers = theme.lineNumber(`${oldNum} ${newNum} `);
+    }
+
+    // Truncate content if too long
+    let content = line.content;
+    const maxContentWidth = this.terminalWidth - this.stripAnsi(lineNumbers).length - 4;
+    if (content.length > maxContentWidth) {
+      content = content.substring(0, maxContentWidth - 3) + '...';
+    }
+
+    // Apply color based on line type
+    let styledContent: string;
+    let styledPrefix: string;
+    
+    switch (line.type) {
+      case 'added':
+        styledPrefix = theme.addedLineBg(' ' + prefix + ' ');
+        styledContent = theme.addedLine(content);
+        break;
+      case 'deleted':
+        styledPrefix = theme.deletedLineBg(' ' + prefix + ' ');
+        styledContent = theme.deletedLine(content);
+        break;
+      default:
+        styledPrefix = ' ' + prefix + ' ';
+        styledContent = theme.unchangedLine(content);
+    }
+
+    return lineNumbers + styledPrefix + ' ' + styledContent;
+  }
+
+  /**
+   * Get prefix character for line type
+   */
+  private getLinePrefix(type: DiffLine['type']): string {
+    switch (type) {
+      case 'added': return '+';
+      case 'deleted': return '-';
+      default: return ' ';
+    }
+  }
+
+  /**
+   * Get visible content lines based on scroll position
+   */
+  private getVisibleContentLines(allLines: string[]): string[] {
+    const availableHeight = this.getAvailableContentHeight();
+    const start = this.scrollPosition;
+    const end = Math.min(start + availableHeight, allLines.length);
+    
+    return allLines.slice(start, end);
+  }
+
+  /**
+   * Get available height for content area
+   */
+  private getAvailableContentHeight(): number {
+    let usedLines = 1;
+    if (this.config.showToolbar) {
+      usedLines += 3;
+    }
+    usedLines += 1;
+    if (this.config.showFooter) usedLines += 1;
+
+    return Math.max(5, this.terminalHeight - usedLines);
+  }
+
+  /**
+   * Render footer with keyboard shortcuts and scroll info
+   */
+  renderFooter(totalLines: number): string {
+    const theme = this.theme;
+    const shortcuts = [
+      `${theme.footerShortcut('↑↓')} ${theme.footerText('Scroll')}`,
+      `${theme.footerShortcut('PgUp/PgDn')} ${theme.footerText('Page')}`,
+      `${theme.footerShortcut('Home/End')} ${theme.footerText('Jump')}`,
+    ];
+
+    // Scroll position indicator
+    const scrollInfo = this.getScrollInfo(totalLines);
+    
+    const leftSide = shortcuts.join(theme.footerText(' │ '));
+    const rightSide = theme.footerText(scrollInfo);
+    
+    const leftWidth = this.stripAnsi(leftSide).length;
+    const rightWidth = this.stripAnsi(rightSide).length;
+    const padding = this.terminalWidth - leftWidth - rightWidth - 4;
+    
+    const footerText = ' ' + leftSide + ' '.repeat(Math.max(0, padding)) + rightSide + ' ';
+    
+    return theme.footerBg(footerText);
+  }
+
+  /**
+   * Get scroll position info string
+   */
+  private getScrollInfo(totalLines: number): string {
+    const visible = this.getAvailableContentHeight();
+    const start = this.scrollPosition + 1;
+    const end = Math.min(this.scrollPosition + visible, totalLines);
+    
+    if (totalLines === 0) return '0/0';
+    return `${start}-${end}/${totalLines}`;
+  }
+
+  /**
+   * Scroll up by specified lines
+   */
+  scrollUp(lines: number = 1): void {
+    this.scrollPosition = Math.max(0, this.scrollPosition - lines);
+  }
+
+  /**
+   * Scroll down by specified lines
+   */
+  scrollDown(totalLines: number, lines: number = 1): void {
+    const maxScroll = Math.max(0, totalLines - this.getAvailableContentHeight());
+    this.scrollPosition = Math.min(maxScroll, this.scrollPosition + lines);
+  }
+
+  /**
+   * Scroll to top
+   */
+  scrollToTop(): void {
+    this.scrollPosition = 0;
+  }
+
+  /**
+   * Scroll to bottom
+   */
+  scrollToBottom(totalLines: number): void {
+    const maxScroll = Math.max(0, totalLines - this.getAvailableContentHeight());
+    this.scrollPosition = maxScroll;
+  }
+
+  /**
+   * Page up
+   */
+  pageUp(): void {
+    const pageSize = this.getAvailableContentHeight() - 1;
+    this.scrollUp(pageSize);
+  }
+
+  /**
+   * Page down
+   */
+  pageDown(totalLines: number): void {
+    const pageSize = this.getAvailableContentHeight() - 1;
+    this.scrollDown(totalLines, pageSize);
+  }
+
+  /**
+   * Handle keyboard input
+   */
+  handleInput(key: string, totalLines: number): { action?: string; handled: boolean } {
+    if (this.confirmationDialog?.show) {
+      return this.handleConfirmationInput(key);
+    }
+
+    switch (key.toLowerCase()) {
+      case 'up':
+      case 'k':
+        this.scrollUp();
+        return { handled: true };
+
+      case 'down':
+      case 'j':
+        this.scrollDown(totalLines);
+        return { handled: true };
+
+      case 'pageup':
+        this.pageUp();
+        return { handled: true };
+
+      case 'pagedown':
+        this.pageDown(totalLines);
+        return { handled: true };
+
+      case 'home':
+      case 'g':
+        this.scrollToTop();
+        return { handled: true };
+
+      case 'end':
+      case 'G':
+        this.scrollToBottom(totalLines);
+        return { handled: true };
+
+      case 'enter':
+        return { action: 'apply', handled: true };
+
+      case 's':
+        return { action: 'skip', handled: true };
+
+      case 'n':
+        return { action: 'next', handled: true };
+
+      case 'p':
+        return { action: 'prev', handled: true };
+
+      case 'q':
+      case 'escape':
+        return { action: 'quit', handled: true };
+
+      case 'A':
+        return this.handleBulkAction('acceptAll');
+
+      case 'R':
+        return this.showConfirmationDialog('rejectAll', 'Reject all pending changes? This cannot be undone.');
+
+      case 'F':
+        return this.handleBulkAction('acceptFile');
+
+      case 'D':
+        return this.showConfirmationDialog('rejectFile', 'Reject all changes in this file? This cannot be undone.');
+
+      case 'H':
+        return this.handleBulkAction('acceptHunk', this.currentHunkIndex);
+
+      case 'K':
+        return this.showConfirmationDialog('rejectHunk', 'Reject all changes in this hunk? This cannot be undone.', this.currentHunkIndex);
+
+      default:
+        return { handled: false };
+    }
+  }
+
+  /**
+   * Handle bulk action
+   */
+  private handleBulkAction(action: string, hunkIndex?: number): { action?: string; handled: boolean } {
+    if (this.pendingChange) {
+      switch (action) {
+        case 'acceptAll':
+          this.pendingChange.acceptAll();
+          break;
+        case 'rejectAll':
+          this.pendingChange.rejectAll();
+          break;
+        case 'acceptFile':
+          this.pendingChange.acceptAll();
+          break;
+        case 'rejectFile':
+          this.pendingChange.rejectAll();
+          break;
+        case 'acceptHunk':
+          if (hunkIndex !== undefined) {
+            this.pendingChange.acceptHunk(hunkIndex);
+          }
+          break;
+        case 'rejectHunk':
+          if (hunkIndex !== undefined) {
+            this.pendingChange.rejectHunk(hunkIndex);
+          }
+          break;
+      }
+    }
+
+    if (this.onBulkActionCallback) {
+      this.onBulkActionCallback(action, hunkIndex);
+    }
+
+    return { action: `bulk:${action}`, handled: true };
+  }
+
+  /**
+   * Show confirmation dialog for destructive actions
+   */
+  private showConfirmationDialog(action: string, message: string, hunkIndex?: number): { action?: string; handled: boolean } {
+    this.confirmationDialog = {
+      show: true,
+      action,
+      message
+    };
+    this.confirmationDialogHunkIndex = hunkIndex;
+    return { handled: true };
+  }
+
+  /**
+   * Handle confirmation dialog input
+   */
+  private handleConfirmationInput(key: string): { action?: string; handled: boolean } {
+    if (!this.confirmationDialog?.show) {
+      return { handled: false };
+    }
+
+    switch (key.toLowerCase()) {
+      case 'y':
+      case 'enter':
+        const action = this.confirmationDialog.action;
+        const hunkIndex = this.confirmationDialogHunkIndex;
+        this.confirmationDialog = null;
+        this.confirmationDialogHunkIndex = undefined;
+        return this.handleBulkAction(action, hunkIndex);
+
+      case 'n':
+      case 'escape':
+      case 'q':
+        this.confirmationDialog = null;
+        this.confirmationDialogHunkIndex = undefined;
+        return { action: 'cancel', handled: true };
+
+      default:
+        return { handled: true };
+    }
+  }
+
+  /**
+   * Render confirmation dialog
+   */
+  renderConfirmationDialog(): string {
+    if (!this.confirmationDialog?.show) {
+      return '';
+    }
+
+    const theme = this.theme;
+    const message = this.confirmationDialog.message;
+    const prompt = ' [Y]es / [N]o ';
+
+    const dialogWidth = Math.min(60, this.terminalWidth - 4);
+    const padding = Math.max(0, dialogWidth - message.length - 2);
+    const centeredMessage = ' ' + message + ' '.repeat(padding) + ' ';
+
+    const lines: string[] = [];
+    lines.push(theme.statsDeleted('┌' + '─'.repeat(dialogWidth) + '┐'));
+    lines.push(theme.statsDeleted('│' + centeredMessage.substring(0, dialogWidth) + '│'));
+    lines.push(theme.statsDeleted('│' + ' '.repeat(dialogWidth) + '│'));
+    lines.push(theme.statsDeleted('│' + prompt.padStart((dialogWidth + prompt.length) / 2).padEnd(dialogWidth) + '│'));
+    lines.push(theme.statsDeleted('└' + '─'.repeat(dialogWidth) + '┘'));
+
+    return lines.join('\n');
+  }
+
+  private confirmationDialogHunkIndex?: number;
+
+  /**
+   * Render a simple diff string (for quick display)
+   */
+  renderSimple(diff: ParsedDiff): string {
+    const lines: string[] = [];
+    
+    for (const hunk of diff.hunks) {
+      lines.push(chalk.dim(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`));
+      
+      for (const line of hunk.lines) {
+        switch (line.type) {
+          case 'added':
+            lines.push(chalk.green(`+ ${line.content}`));
+            break;
+          case 'deleted':
+            lines.push(chalk.red(`- ${line.content}`));
+            break;
+          default:
+            lines.push(chalk.dim(`  ${line.content}`));
+        }
+      }
+    }
+    
+    return lines.join('\n');
+  }
+
+  /**
+   * Clear terminal and render
+   */
+  clearAndRender(diff: ParsedDiff): void {
+    console.clear();
+    console.log(this.render(diff));
+  }
+
+  /**
+   * Strip ANSI codes from string
+   */
+  private stripAnsi(str: string): string {
+    // eslint-disable-next-line no-control-regex
+    return str.replace(/\u001b\[[0-9;]*m/g, '');
+  }
+
+  /**
+   * Get current scroll position
+   */
+  getScrollPosition(): number {
+    return this.scrollPosition;
+  }
+
+  /**
+   * Get current theme
+   */
+  getTheme(): TUITheme {
+    return this.theme;
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): TUIRendererConfig {
+    return { ...this.config };
+  }
+}
+
+export default TUIRenderer;

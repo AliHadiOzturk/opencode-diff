@@ -1,0 +1,88 @@
+{
+  "name": "opencode-diff",
+  "version": "0.1.0",
+  "description": "Interactive diff viewer plugin for OpenCode with vim-style navigation, granular change acceptance, and beautiful terminal UI",
+  "main": "dist/index.js",
+  "bin": {
+    "setup-opencode-diff-plugin": "dist/setup.js"
+  },
+  "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "diff",
+    "git",
+    "code-review",
+    "terminal",
+    "tui",
+    "vim",
+    "keyboard-navigation",
+    "typescript",
+    "cli",
+    "developer-tools",
+    "productivity",
+    "code-changes",
+    "unified-diff"
+  ],
+  "author": {
+    "name": "OpenCode Community",
+    "url": "https://opencode.ai"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AliHadiOzturk/opencode-diff-plugin.git",
+    "directory": "."
+  },
+  "bugs": {
+    "url": "https://github.com/AliHadiOzturk/opencode-diff-plugin/issues"
+  },
+  "homepage": "https://github.com/AliHadiOzturk/opencode-diff-plugin#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "diff": "^5.1.0",
+    "parse-git-diff": "^0.0.19"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "latest"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "bun-types": "^1.3.9",
+    "typescript": "^5.3.0"
+  }
+}

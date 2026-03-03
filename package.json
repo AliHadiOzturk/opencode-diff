@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "@types/diff": "^7.0.2"
+  },
+  "dependencies": {
+    "opencode-diff": "^0.1.0",
+    "parse-git-diff": "^0.0.19"
+  }
+}

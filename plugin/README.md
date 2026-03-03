@@ -1,0 +1,594 @@
+# OpenCode Diff
+
+A powerful terminal-based diff viewer plugin for OpenCode that provides interactive code review capabilities with vim-style navigation, granular change acceptance, and beautiful terminal UI rendering.
+
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](./package.json)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue.svg)](https://www.typescriptlang.org/)
+
+## Features
+
+- **Interactive Diff Viewer** - Review code changes with a rich terminal UI
+- **Granular Control** - Accept or reject changes at line, hunk, or file level
+- **Vim-Style Navigation** - Efficient keyboard-driven interface
+- **Syntax Highlighting** - Automatic language detection for 40+ languages
+- **Theme Support** - Light and dark themes for comfortable viewing
+- **Auto-accept/Reject** - Configure glob patterns for automatic handling
+- **Undo/Redo** - Full action history with undo support
+- **Large File Handling** - Configurable size limits for performance
+- **One-Command Setup** - NPX setup script for instant integration
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Setup](#quick-setup)
+- [Configuration](#configuration)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Usage](#usage)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Installation
+
+### Prerequisites
+
+- Node.js 18+ or Bun 1.0+
+- OpenCode CLI (peer dependency)
+
+### Quick Setup (Recommended)
+
+The fastest way to get started is using the NPX setup script:
+
+```bash
+npx opencode-diff setup
+```
+
+This will:
+- ✅ Check your Node.js version (requires >= 18.0.0)
+- ✅ Install the plugin in your project
+- ✅ Create `opencode.json` with the plugin configured
+- ✅ Create `.opencode/diff-plugin.json` with safe defaults
+
+Preview changes before applying:
+```bash
+npx opencode-diff setup --dry-run
+```
+
+### Manual Install from npm
+
+```bash
+npm install opencode-diff
+```
+
+### Install with Bun
+
+```bash
+bun add opencode-diff
+```
+
+### Enable in OpenCode
+
+Add to your OpenCode configuration (`opencode.json`):
+
+```json
+{
+  "plugins": [
+    "opencode-diff"
+  ]
+}
+```
+
+Or install directly:
+
+```bash
+opencode plugin add opencode-diff
+```
+
+## Quick Setup
+
+The NPX setup script automates all configuration steps:
+
+```bash
+# Interactive setup (installs plugin and creates configs)
+npx opencode-diff setup
+
+# Preview changes without applying
+npx opencode-diff setup --dry-run
+
+# Show help
+npx opencode-diff setup --help
+```
+
+### What the Setup Script Does
+
+1. **Validates environment** - Checks Node.js >= 18.0.0 and package.json
+2. **Installs the plugin** - Adds `opencode-diff` to your project
+3. **Creates `opencode.json`** - Configures OpenCode to use the plugin
+4. **Creates `.opencode/diff-plugin.json`** - Sets up plugin with safe defaults (IDE mode disabled)
+5. **Preserves existing configs** - Merges with existing plugins if present
+
+### Setup Script Options
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview changes without applying them |
+| `--help` | Show usage information |
+
+### Safe Defaults
+
+The setup script creates configurations with safe defaults:
+
+**opencode.json:**
+```json
+{
+  "plugins": ["opencode-diff@latest"]
+}
+```
+
+**.opencode/diff-plugin.json:**
+```json
+{
+  "enabled": true,
+  "ide": {
+    "enabled": false,
+    "stateFilePath": ".opencode/.diff-plugin-state.json"
+  },
+  "autoAccept": ["package-lock.json", "yarn.lock", "*.lock"],
+  "autoReject": [],
+  "maxFileSize": 1048576,
+  "theme": "auto",
+  "showLineNumbers": true,
+  "confirmRejectAll": true,
+  "keybindings": []
+}
+```
+
+**Note:** IDE integration is disabled by default. Enable it only if you're using the VSCode extension.
+
+## Configuration
+
+The plugin uses a JSON configuration file located at `.opencode/diff-plugin.json` in your workspace root.
+
+### Configuration File
+
+Create `.opencode/diff-plugin.json`:
+
+```json
+{
+  "enabled": true,
+  "autoAccept": ["*.lock", "package-lock.json", "yarn.lock"],
+  "autoReject": ["*.min.js", "*.min.css"],
+  "maxFileSize": 1048576,
+  "theme": "auto",
+  "showLineNumbers": true,
+  "confirmRejectAll": true,
+  "keybindings": []
+}
+```
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable or disable the plugin |
+| `autoAccept` | `string[]` | `[]` | Glob patterns for files to auto-accept |
+| `autoReject` | `string[]` | `[]` | Glob patterns for files to auto-reject |
+| `maxFileSize` | `number` | `1048576` | Max file size in bytes (0 = unlimited) |
+| `theme` | `"light" \| "dark" \| "auto"` | `"auto"` | UI theme preference |
+| `showLineNumbers` | `boolean` | `true` | Display line numbers in diff view |
+| `confirmRejectAll` | `boolean` | `true` | Show confirmation before rejecting all |
+| `keybindings` | `KeybindingConfig[]` | `[]` | Custom keyboard shortcuts |
+
+### Custom Keybindings
+
+Add custom keybindings to the configuration:
+
+```json
+{
+  "keybindings": [
+    {
+      "key": "Ctrl+s",
+      "action": "acceptLine",
+      "description": "Accept line with Ctrl+S"
+    },
+    {
+      "key": "x",
+      "action": "rejectHunk",
+      "description": "Reject hunk with X"
+    }
+  ]
+}
+```
+
+**Available Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `acceptLine` | Accept the current line |
+| `rejectLine` | Reject the current line |
+| `acceptHunk` | Accept all lines in current hunk |
+| `rejectHunk` | Reject all lines in current hunk |
+| `acceptFile` | Accept all changes in current file |
+| `rejectFile` | Reject all changes in current file |
+| `acceptAll` | Accept all pending changes |
+| `rejectAll` | Reject all pending changes |
+| `nextLine` | Move to next line |
+| `prevLine` | Move to previous line |
+| `nextHunk` | Jump to next hunk |
+| `prevHunk` | Jump to previous hunk |
+| `nextFile` | Go to next file |
+| `prevFile` | Go to previous file |
+| `pageUp` | Scroll up one page |
+| `pageDown` | Scroll down one page |
+| `goToTop` | Jump to top of diff |
+| `goToBottom` | Jump to bottom of diff |
+| `toggleHelp` | Show/hide help overlay |
+| `quit` | Exit the diff viewer |
+| `undo` | Undo last action |
+| `redo` | Redo last undone action |
+
+## Keyboard Shortcuts
+
+### Default Keybindings
+
+#### Line Actions
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `y` | Accept Line | Accept the current line |
+| `n` | Reject Line | Reject the current line |
+
+#### Hunk Actions
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `h` | Accept Hunk | Accept all lines in current hunk |
+| `r` | Reject Hunk | Reject all lines in current hunk |
+
+#### File Actions
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `a` | Accept File | Accept all changes in current file |
+| `d` | Reject File | Reject all changes in current file |
+| `A` | Accept All | Accept all pending changes |
+| `R` | Reject All | Reject all pending changes |
+
+#### Navigation
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `j` / `↓` | Next Line | Move to next line |
+| `k` / `↑` | Prev Line | Move to previous line |
+| `]` | Next Hunk | Jump to next hunk |
+| `[` | Prev Hunk | Jump to previous hunk |
+| `l` | Next File | Go to next file |
+| `p` | Prev File | Go to previous file |
+| `PageDown` / `Space` | Page Down | Scroll down one page |
+| `PageUp` / `Shift+Space` | Page Up | Scroll up one page |
+| `g` / `Home` | Go to Top | Jump to top of diff |
+| `G` / `End` | Go to Bottom | Jump to bottom of diff |
+
+#### Global Actions
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `q` / `Esc` | Quit | Exit the diff viewer |
+| `?` | Toggle Help | Show/hide help overlay |
+| `u` | Undo | Undo last action |
+| `Ctrl+r` | Redo | Redo last undone action |
+
+## Usage
+
+### Basic Usage
+
+Once installed and enabled, the plugin automatically intercepts file edit operations from OpenCode and presents an interactive diff viewer.
+
+### Workflow
+
+1. **OpenCode proposes changes** → Plugin intercepts the operation
+2. **Diff viewer appears** → See changes with syntax highlighting
+3. **Review changes** → Navigate with vim keys
+4. **Accept/Reject** → Use shortcuts to manage changes
+5. **Finish** → Press `q` to apply accepted changes
+
+### Example Session
+
+```
+OpenCode: Editing src/utils.ts
+
+[Diff viewer opens]
+
+File: src/utils.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 12 │  12 │ function calculateTotal(items) {
+ 13 │  13 │   let total = 0;
+ 14 │  14 │   for (const item of items) {
+    │  15 │+    // Apply discount if available
+    │  16 │+    const price = item.discount
+    │  17 │+      ? item.price * (1 - item.discount)
+ 15 │  18 │       : item.price;
+ 16 │  19 │     total += price;
+ 17 │  20 │   }
+
+[y]accept [n]reject [h]accept hunk [r]reject hunk [q]uit [?]help
+```
+
+### Commands
+
+The plugin works automatically with OpenCode's built-in tools:
+
+- **File edits** - Automatically intercepted
+- **Batch operations** - Review multiple files
+- **Undo support** - `u` to undo last action
+- **Redo support** - `Ctrl+r` to redo
+
+## Examples
+
+See the [examples/basic/](./examples/basic/) directory for a complete example project demonstrating the diff viewer features.
+
+### Quick Example
+
+```typescript
+// example.ts - Before
+function greet(name) {
+  return "Hello, " + name;
+}
+
+// After OpenCode edit with diff plugin
+function greet(name: string): string {
+  return `Hello, ${name}!`;
+}
+```
+
+**Diff View:**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  example.ts                                    +3/-2 lines │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│   1 │    1 │-function greet(name) {                       │
+│     │    1 │+function greet(name: string): string {       │
+│   2 │    3 │-  return "Hello, " + name;                   │
+│     │    3 │+  return `Hello, ${name}!`;                  │
+│   3 │    4 │ }                                            │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+[y]accept [n]reject [h]accept hunk [r]reject hunk [?]help
+```
+
+## Screenshots
+
+### Dark Theme
+
+```
+╔═══════════════════════════════════════════════════════════════════════════╗
+║  src/components/Button.tsx                                    +23/-8 lines ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║  [Accept All] [Reject All] [View Stats]                         3 hunks   ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║                                                                           ║
+║ @@ -15,7 +15,7 @@                                                        ║
+║   15 │  15 │ import React from 'react';                                  ║
+║   16 │  16 │                                                            ║
+║   17 │  17 │ interface ButtonProps {                                     ║
+║   18 │     │-  onClick: () => void;                                      ║
+║      │  18 │+  onClick: (event: MouseEvent) => void;                     ║
+║   19 │  19 │   variant: 'primary' | 'secondary';                         ║
+║   20 │  20 │   children: React.ReactNode;                                ║
+║   21 │  21 │ }                                                           ║
+║                                                                           ║
+║ @@ -28,6 +28,12 @@                                                       ║
+║   28 │  28 │     variant = 'primary',                                    ║
+║   29 │  29 │     children                                ║
+║   30 │  30 │   } = props;                                                ║
+║      │     │+                                                            ║
+║      │     │+  const handleClick = (e: MouseEvent) => {                   ║
+║      │     │+    e.preventDefault();                                      ║
+║      │     │+    onClick(e);                                             ║
+║      │     │+  };                                                        ║
+║   31 │  35 │                                                            ║
+║   32 │  36 │   return (                                                  ║
+║      │  37 │+    <button onClick={handleClick}>                          ║
+║   33 │     │-    <button onClick={onClick}>                              ║
+║   34 │  38 │       {children}                                            ║
+║                                                                           ║
+╠═══════════════════════════════════════════════════════════════════════════╣
+║  [y]accept [n]reject │ [h]accept hunk [r]reject hunk │ [q]uit [?]help     ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+```
+
+### Light Theme
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│  README.md                                                    +15/-3 lines │
+├───────────────────────────────────────────────────────────────────────────┤
+│  [Accept All] [Reject All] [View Stats]                         1 hunk    │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│ @@ -1,8 +1,20 @@                                                         │
+│   1 │   1 │ # My Project                                                 │
+│   2 │   2 │                                                             │
+│   3 │   3 │ A sample project for testing.                                │
+│     │   4 │+                                                            │
+│     │   5 │+## Features                                                 │
+│     │   6 │+                                                            │
+│     │   7 │+- Fast and efficient                                        │
+│     │   8 │+- Easy to use                                               │
+│     │   9 │+- Well documented                                           │
+│     │  10 │+                                                            │
+│   4 │  11 │ ## Installation                                            │
+│   5 │  12 │                                                             │
+│   6 │  13 │ ```bash                                                    │
+│   7 │  14 │ npm install my-project                                     │
+│   8 │  15 │ ```                                                        │
+│                                                                           │
+├───────────────────────────────────────────────────────────────────────────┤
+│  [y]accept [n]reject │ [h]accept hunk [r]reject hunk │ [q]uit [?]help     │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+### Help Overlay
+
+```
+╔════════════════════════════════════════════════════════════╗
+║                  Keyboard Shortcuts Help                   ║
+╠════════════════════════════════════════════════════════════╣
+║  Line Actions                                              ║
+║  ────────────────────────────────────────────────────────  ║
+║    y           Accept current line                         ║
+║    n           Reject current line                         ║
+║                                                            ║
+║  Hunk Actions                                              ║
+║  ────────────────────────────────────────────────────────  ║
+║    h           Accept current hunk                         ║
+║    r           Reject current hunk                         ║
+║                                                            ║
+║  File Actions                                              ║
+║  ────────────────────────────────────────────────────────  ║
+║    a           Accept entire file                          ║
+║    d           Reject entire file                          ║
+║    A           Accept all pending changes                  ║
+║    R           Reject all pending changes                  ║
+║                                                            ║
+║  Navigation                                                ║
+║  ────────────────────────────────────────────────────────  ║
+║    j           Move to next line                           ║
+║    k           Move to previous line                       ║
+║    ]           Jump to next hunk                           ║
+║    [           Jump to previous hunk                       ║
+║                                                            ║
+║  Global                                                    ║
+║  ────────────────────────────────────────────────────────  ║
+║    q           Quit viewer                                 ║
+║    ?           Toggle help                                 ║
+║    u           Undo last action                            ║
+╚════════════════════════════════════════════════════════════╝
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Plugin Not Loading
+
+**Problem:** The diff viewer doesn't appear when OpenCode makes edits.
+
+**Solutions:**
+
+1. Check that the plugin is installed:
+   ```bash
+   npm list opencode-diff
+   ```
+
+2. Verify the plugin is enabled in `.opencode/diff-plugin.json`:
+   ```json
+   {
+     "enabled": true
+   }
+   ```
+
+3. Check OpenCode plugin configuration:
+   ```bash
+   opencode plugin list
+   ```
+
+#### Large Files Not Showing
+
+**Problem:** Diff viewer doesn't appear for large files.
+
+**Solution:** Increase the `maxFileSize` limit in configuration:
+
+```json
+{
+  "maxFileSize": 5242880
+}
+```
+
+Or set to `0` for unlimited (not recommended for very large files).
+
+#### Keyboard Shortcuts Not Working
+
+**Problem:** Keys don't respond in the diff viewer.
+
+**Solutions:**
+
+1. Check that your terminal supports raw mode input
+2. Try using arrow keys as alternatives to `j`/`k`
+3. Verify no other process is intercepting key events
+
+#### Configuration Not Loading
+
+**Problem:** Changes to `.opencode/diff-plugin.json` have no effect.
+
+**Solutions:**
+
+1. Validate your JSON syntax:
+   ```bash
+   cat .opencode/diff-plugin.json | jq .
+   ```
+
+2. Restart OpenCode after configuration changes
+
+3. Check for validation errors in the logs
+
+#### Theme Not Applied
+
+**Problem:** Colors look wrong or theme doesn't match preference.
+
+**Solutions:**
+
+1. Set theme explicitly instead of `auto`:
+   ```json
+   {
+     "theme": "dark"
+   }
+   ```
+
+2. Ensure your terminal supports 256 colors:
+   ```bash
+   echo $TERM
+   # Should show something like xterm-256color
+   ```
+
+### Debug Mode
+
+Enable debug logging by setting the environment variable:
+
+```bash
+DEBUG=opencode-diff opencode
+```
+
+### Getting Help
+
+- **GitHub Issues:** [Report bugs or request features](https://github.com/AliHadiOzturk/opencode-diff-plugin/issues)
+- **Documentation:** [Full documentation](./docs/)
+- **Examples:** [Example projects](./examples/)
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for details on:
+
+- Development setup
+- Build instructions
+- Testing guide
+- Pull request process
+
+## License
+
+MIT License - see [LICENSE](./LICENSE) for details.
+
+## Acknowledgments
+
+- Built for [OpenCode](https://opencode.ai)
+- Uses [chalk](https://github.com/chalk/chalk) for terminal styling
+- Uses [parse-git-diff](https://github.com/sergei-gaponik/parse-git-diff) for diff parsing
+- Uses [diff](https://github.com/kpdecker/jsdiff) for diff generation
+
+---
+
+Made with ❤️ for the OpenCode community
