@@ -165,7 +165,7 @@ describe('StateSync', () => {
       expect(readChanges[0].callID).toBe('call_456');
     });
 
-    it('should throw on unsupported version', async () => {
+    it('should handle unsupported version gracefully', async () => {
       const invalidState = {
         version: '2.0',
         timestamp: Date.now(),
@@ -175,7 +175,9 @@ describe('StateSync', () => {
 
       writeFileSync(TEST_STATE_FILE, JSON.stringify(invalidState));
 
-      expect(stateSync.readState()).rejects.toThrow(StateSyncError);
+      // Should not throw - gracefully handles version mismatch
+      const changes = await stateSync.readState();
+      expect(changes).toEqual([]);
     });
 
     it('should throw on invalid JSON', async () => {

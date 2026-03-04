@@ -41,19 +41,28 @@ A powerful terminal-based diff viewer plugin for OpenCode that provides interact
 
 The fastest way to get started is using the NPX setup script:
 
+**Global Installation (Recommended for most users):**
+```bash
+npx opencode-diff setup --global
+```
+
+This installs the plugin globally, making it available in all projects without per-project installation.
+
+**Local Installation (Project-specific):**
 ```bash
 npx opencode-diff setup
 ```
 
 This will:
 - ✅ Check your Node.js version (requires >= 18.0.0)
-- ✅ Install the plugin in your project
-- ✅ Create `opencode.json` with the plugin configured
-- ✅ Create `.opencode/diff-plugin.json` with safe defaults
+- ✅ Install the plugin
+- ✅ Create configuration files
+- ✅ Set up safe defaults
 
 Preview changes before applying:
 ```bash
 npx opencode-diff setup --dry-run
+npx opencode-diff setup --global --dry-run
 ```
 
 ### Manual Install from npm
@@ -101,20 +110,27 @@ npx opencode-diff setup --dry-run
 npx opencode-diff setup --help
 ```
 
-### What the Setup Script Does
+### Installation Modes
 
-1. **Validates environment** - Checks Node.js >= 18.0.0 and package.json
-2. **Installs the plugin** - Adds `opencode-diff` to your project
-3. **Creates `opencode.json`** - Configures OpenCode to use the plugin
-4. **Creates `.opencode/diff-plugin.json`** - Sets up plugin with safe defaults (IDE mode disabled)
-5. **Preserves existing configs** - Merges with existing plugins if present
+**Global Installation (`--global`):**
+- Installs plugin globally (`npm install -g`)
+- Creates `~/.opencode/config.json` with plugin reference
+- Plugin available in all projects automatically
+- Creates `.opencode/diff-plugin.json` in current directory for per-project settings
+
+**Local Installation (default):**
+- Installs plugin in current project
+- Creates `opencode.json` with plugin reference
+- Plugin only available in this project
+- Creates `.opencode/diff-plugin.json` with safe defaults
 
 ### Setup Script Options
 
 | Flag | Description |
 |------|-------------|
+| `--global, -g` | Install plugin globally (available in all projects) |
 | `--dry-run` | Preview changes without applying them |
-| `--help` | Show usage information |
+| `--help, -h` | Show usage information |
 
 ### Safe Defaults
 

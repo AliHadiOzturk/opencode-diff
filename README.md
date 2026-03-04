@@ -188,6 +188,64 @@ Press F5 in VSCode to launch Extension Development Host.
 | `ide.enabled` | boolean | false | Enable IDE integration |
 | `ide.stateFilePath` | string | ".opencode/.diff-plugin-state.json" | State file location |
 
+### Modes
+
+The plugin supports three diff viewer modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `tui` | Terminal UI with vim-style navigation (default) | Interactive terminal sessions |
+| `vscode-only` | VSCode extension only, no TUI | VSCode workflow, headless environments |
+| `auto` | Auto-detect based on environment | Mixed workflows |
+
+**Mode Configuration:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mode` | string | `"tui"` | Diff viewer mode: `"tui"`, `"vscode-only"`, or `"auto"` |
+
+#### VSCode-only Mode
+
+When `mode` is set to `"vscode-only"`, the plugin bypasses the terminal UI and sends changes directly to the VSCode extension. This is ideal for:
+
+- VSCode-centric workflows
+- Headless/CI environments with VSCode integration
+- Users who prefer GUI diff review
+
+**VSCode-only Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `vscodeOnly.applyImmediately` | boolean | `false` | Apply changes immediately without review |
+| `vscodeOnly.backupOriginals` | boolean | `true` | Backup original files before applying changes |
+| `vscodeOnly.notificationOnChange` | boolean | `true` | Show notifications when changes are applied |
+| `vscodeOnly.maxPendingAgeHours` | number | `24` | Maximum age in hours for pending changes before auto-cleanup |
+| `vscodeOnly.fallbackToTuiIfVsCodeClosed` | boolean | `true` | Fallback to TUI if VSCode is not available |
+| `vscodeOnly.maxBackupSizeBytes` | number | `104857600` | Maximum backup size in bytes (0 = unlimited) |
+
+**Example VSCode-only configuration:**
+
+```json
+{
+  "enabled": true,
+  "mode": "vscode-only",
+  "vscodeOnly": {
+    "applyImmediately": false,
+    "backupOriginals": true,
+    "notificationOnChange": true,
+    "maxPendingAgeHours": 24,
+    "fallbackToTuiIfVsCodeClosed": true,
+    "maxBackupSizeBytes": 104857600
+  },
+  "ide": {
+    "enabled": true,
+    "stateFilePath": ".opencode/.diff-plugin-state.json"
+  }
+}
+```
+
+See [docs/migration.md](docs/migration.md) for migration guide from TUI to VSCode-only mode.
+
 ## Architecture
 
 ### Security Model

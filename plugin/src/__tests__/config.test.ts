@@ -48,6 +48,25 @@ describe('ConfigManager', () => {
       expect(config.ide?.stateFilePath).toBe('.opencode/.diff-plugin-state.json');
     });
 
+    it('should have default mode set to "tui" for backward compatibility', () => {
+      configManager = new ConfigManager(TEST_DIR);
+
+      expect(configManager.getMode()).toBe('tui');
+      expect(DEFAULT_CONFIG.mode).toBe('tui');
+    });
+
+    it('should have default vscodeOnly config with expected values', () => {
+      configManager = new ConfigManager(TEST_DIR);
+
+      const vscodeOnly = configManager.getVSCodeOnlyConfig();
+      expect(vscodeOnly.applyImmediately).toBe(false);
+      expect(vscodeOnly.backupOriginals).toBe(true);
+      expect(vscodeOnly.notificationOnChange).toBe(true);
+      expect(vscodeOnly.maxPendingAgeHours).toBe(24);
+      expect(vscodeOnly.fallbackToTuiIfVsCodeClosed).toBe(true);
+      expect(vscodeOnly.maxBackupSizeBytes).toBe(100 * 1024 * 1024);
+    });
+
     it('should load IDE config from file when it exists', () => {
       const customConfig: Partial<PluginConfig> = {
         ide: {
@@ -87,6 +106,94 @@ describe('ConfigManager', () => {
 
       expect(configManager.getConfig().ide?.enabled).toBe(true);
       expect(configManager.getConfig().ide?.stateFilePath).toBe('.opencode/.diff-plugin-state.json');
+    });
+
+    it('should load mode from file when it exists', () => {
+      const customConfig: Partial<PluginConfig> = {
+        mode: 'vscode-only',
+      };
+
+      const configDir = join(TEST_DIR, '.opencode');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, 'diff-plugin.json'),
+        JSON.stringify(customConfig)
+      );
+
+      configManager = new ConfigManager(TEST_DIR);
+
+      expect(configManager.getMode()).toBe('vscode-only');
+    });
+
+    it('should load vscodeOnly config from file when it exists', () => {
+      const customConfig: Partial<PluginConfig> = {
+        vscodeOnly: {
+          applyImmediately: true,
+          backupOriginals: false,
+          notificationOnChange: false,
+          maxPendingAgeHours: 48,
+          fallbackToTuiIfVsCodeClosed: false,
+          maxBackupSizeBytes: 1024 * 1024,
+        },
+      };
+
+      const configDir = join(TEST_DIR, '.opencode');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, 'diff-plugin.json'),
+        JSON.stringify(customConfig)
+      );
+
+      configManager = new ConfigManager(TEST_DIR);
+
+      const vscodeOnly = configManager.getVSCodeOnlyConfig();
+      expect(vscodeOnly.applyImmediately).toBe(true);
+      expect(vscodeOnly.backupOriginals).toBe(false);
+      expect(vscodeOnly.notificationOnChange).toBe(false);
+      expect(vscodeOnly.maxPendingAgeHours).toBe(48);
+      expect(vscodeOnly.fallbackToTuiIfVsCodeClosed).toBe(false);
+      expect(vscodeOnly.maxBackupSizeBytes).toBe(1024 * 1024);
+    });
+
+    it('should merge partial vscodeOnly config with defaults', () => {
+      const partialConfig: Partial<PluginConfig> = {
+        vscodeOnly: {
+          applyImmediately: true,
+        } as PluginConfig['vscodeOnly'],
+      };
+
+      const configDir = join(TEST_DIR, '.opencode');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, 'diff-plugin.json'),
+        JSON.stringify(partialConfig)
+      );
+
+      configManager = new ConfigManager(TEST_DIR);
+
+      const vscodeOnly = configManager.getVSCodeOnlyConfig();
+      expect(vscodeOnly.applyImmediately).toBe(true);
+      expect(vscodeOnly.backupOriginals).toBe(DEFAULT_CONFIG.vscodeOnly!.backupOriginals);
+      expect(vscodeOnly.notificationOnChange).toBe(DEFAULT_CONFIG.vscodeOnly!.notificationOnChange);
+      expect(vscodeOnly.maxPendingAgeHours).toBe(DEFAULT_CONFIG.vscodeOnly!.maxPendingAgeHours);
+    });
+
+    it('should default to "tui" mode when not specified in config file', () => {
+      const partialConfig: Partial<PluginConfig> = {
+        theme: 'dark',
+      };
+
+      const configDir = join(TEST_DIR, '.opencode');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, 'diff-plugin.json'),
+        JSON.stringify(partialConfig)
+      );
+
+      configManager = new ConfigManager(TEST_DIR);
+
+      expect(configManager.getMode()).toBe('tui');
+      expect(configManager.getTheme()).toBe('dark');
     });
 
     it('should load config from file when it exists', () => {
@@ -275,17 +382,139 @@ describe('ConfigManager', () => {
     });
 
     it('should detect invalid ide.enabled type', () => {
-      configManager.update({ ide: { enabled: 'yes' } });
+      configManager.update({ ide: { enabled: 'yes' as unknown as boolean } });
       const result = configManager.validate();
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('ide.enabled must be a boolean');
     });
 
     it('should detect invalid ide.stateFilePath type', () => {
-      configManager.update({ ide: { stateFilePath: 123 } });
+      configManager.update({ ide: { stateFilePath: 123 as unknown as string } });
       const result = configManager.validate();
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('ide.stateFilePath must be a string');
+    });
+
+    it('should accept valid mode values', () => {
+      for (const mode of ['tui', 'vscode-only', 'auto'] as const) {
+        configManager.update({ mode });
+        const result = configManager.validate();
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it('should detect invalid mode value', () => {
+      configManager.update({ mode: 'invalid' as 'tui' });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('mode must be "tui", "vscode-only", or "auto"');
+    });
+
+    it('should accept undefined mode (uses default)', () => {
+      configManager.update({ mode: undefined });
+      const result = configManager.validate();
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate vscodeOnly config with all fields', () => {
+      configManager.update({
+        mode: 'vscode-only',
+        vscodeOnly: {
+          applyImmediately: true,
+          backupOriginals: true,
+          notificationOnChange: true,
+          maxPendingAgeHours: 48,
+          fallbackToTuiIfVsCodeClosed: true,
+          maxBackupSizeBytes: 1024 * 1024,
+        },
+      });
+      const result = configManager.validate();
+      expect(result.valid).toBe(true);
+    });
+
+    it('should validate vscodeOnly config with partial fields', () => {
+      configManager.update({
+        vscodeOnly: {
+          applyImmediately: true,
+        } as PluginConfig['vscodeOnly'],
+      });
+      const result = configManager.validate();
+      expect(result.valid).toBe(true);
+    });
+
+    it('should detect invalid vscodeOnly type', () => {
+      configManager.update({ vscodeOnly: 'invalid' as unknown as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly must be an object');
+    });
+
+    it('should detect invalid vscodeOnly.applyImmediately type', () => {
+      configManager.update({ vscodeOnly: { applyImmediately: 'yes' } as unknown as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.applyImmediately must be a boolean');
+    });
+
+    it('should detect invalid vscodeOnly.backupOriginals type', () => {
+      configManager.update({ vscodeOnly: { backupOriginals: 'yes' } as unknown as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.backupOriginals must be a boolean');
+    });
+
+    it('should detect invalid vscodeOnly.notificationOnChange type', () => {
+      configManager.update({ vscodeOnly: { notificationOnChange: 'yes' } as unknown as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.notificationOnChange must be a boolean');
+    });
+
+    it('should detect invalid vscodeOnly.maxPendingAgeHours (negative)', () => {
+      configManager.update({ vscodeOnly: { maxPendingAgeHours: -1 } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.maxPendingAgeHours must be a non-negative number');
+    });
+
+    it('should detect invalid vscodeOnly.maxPendingAgeHours (non-number)', () => {
+      configManager.update({ vscodeOnly: { maxPendingAgeHours: '24' as unknown as number } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.maxPendingAgeHours must be a non-negative number');
+    });
+
+    it('should detect invalid vscodeOnly.fallbackToTuiIfVsCodeClosed type', () => {
+      configManager.update({ vscodeOnly: { fallbackToTuiIfVsCodeClosed: 'yes' } as unknown as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.fallbackToTuiIfVsCodeClosed must be a boolean');
+    });
+
+    it('should detect invalid vscodeOnly.maxBackupSizeBytes (negative)', () => {
+      configManager.update({ vscodeOnly: { maxBackupSizeBytes: -1 } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.maxBackupSizeBytes must be a non-negative number');
+    });
+
+    it('should detect invalid vscodeOnly.maxBackupSizeBytes (non-number)', () => {
+      configManager.update({ vscodeOnly: { maxBackupSizeBytes: '100' as unknown as number } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('vscodeOnly.maxBackupSizeBytes must be a non-negative number');
+    });
+
+    it('should accept zero for vscodeOnly.maxPendingAgeHours', () => {
+      configManager.update({ vscodeOnly: { maxPendingAgeHours: 0 } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept zero for vscodeOnly.maxBackupSizeBytes', () => {
+      configManager.update({ vscodeOnly: { maxBackupSizeBytes: 0 } as PluginConfig['vscodeOnly'] });
+      const result = configManager.validate();
+      expect(result.valid).toBe(true);
     });
 
     it('should throw on validateOrThrow when invalid', () => {

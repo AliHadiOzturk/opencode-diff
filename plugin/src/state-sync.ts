@@ -7,8 +7,11 @@
  */
 
 import { existsSync, mkdirSync, rename, unlink, writeFile, readFile, watch, type FSWatcher, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, basename } from 'path';
 import { PendingChange, ChangeQueue } from './state-manager.js';
+import { createLogger } from './debug.js';
+
+const logger = createLogger('StateSync');
 
 /**
  * State file format version
@@ -116,7 +119,7 @@ export class StateSync {
   }
 
   /**
-   * Write state to file atomically
+   * Write state to file atomically with comprehensive error handling
    *
    * Uses temp file + rename pattern for atomic writes:
    * 1. Write to temp file
@@ -134,7 +137,17 @@ export class StateSync {
       // Ensure directory exists
       const dir = dirname(this.statePath);
       if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+        try {
+          mkdirSync(dir, { recursive: true });
+          logger.debug('Created state directory', { dir });
+        } catch (mkdirError) {
+          const nodeError = mkdirError as NodeJS.ErrnoException;
+          logger.error('Failed to create state directory', { dir, error: nodeError.message, code: nodeError.code });
+          throw new StateSyncError(
+            `Failed to create state directory: ${nodeError.message}`,
+            'write'
+          );
+        }
       }
 
       // Prepare state data
@@ -146,18 +159,64 @@ export class StateSync {
       };
 
       // Convert to JSON
-      const jsonContent = JSON.stringify(stateData, null, 2);
+      let jsonContent: string;
+      try {
+        jsonContent = JSON.stringify(stateData, null, 2);
+      } catch (stringifyError) {
+        logger.error('Failed to stringify state data', { error: (stringifyError as Error).message });
+        throw new StateSyncError(
+          `Failed to serialize state: ${(stringifyError as Error).message}`,
+          'write'
+        );
+      }
 
       // Write to temp file
       const tempPath = `${this.statePath}.tmp`;
-      await this.writeFileAsync(tempPath, jsonContent);
+      try {
+        await this.writeFileAsync(tempPath, jsonContent);
+        logger.debug('Temp file written', { tempPath, size: jsonContent.length });
+      } catch (writeError) {
+        const nodeError = writeError as NodeJS.ErrnoException;
+        logger.error('Failed to write temp state file', { tempPath, error: nodeError.message, code: nodeError.code });
+
+        if (nodeError.code === 'ENOSPC') {
+          throw new StateSyncError(
+            'Disk full - unable to write state file. Free up disk space and try again.',
+            'write'
+          );
+        } else if (nodeError.code === 'EACCES' || nodeError.code === 'EPERM') {
+          throw new StateSyncError(
+            `Permission denied writing state file: ${nodeError.message}`,
+            'write'
+          );
+        }
+
+        throw new StateSyncError(`Failed to write state file: ${nodeError.message}`, 'write');
+      }
 
       // Atomic rename
-      await this.renameAsync(tempPath, this.statePath);
+      try {
+        await this.renameAsync(tempPath, this.statePath);
+        logger.debug('Atomic rename completed', { tempPath, target: this.statePath });
+      } catch (renameError) {
+        const nodeError = renameError as NodeJS.ErrnoException;
+        logger.error('Failed to rename temp file', { tempPath, target: this.statePath, error: nodeError.message });
 
-      this.log('State written successfully:', changes.length, 'changes');
+        // Cleanup temp file
+        try {
+          await this.unlinkAsync(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+
+        throw new StateSyncError(`Failed to finalize state file: ${nodeError.message}`, 'write');
+      }
+
+      logger.info('State written successfully', { changesCount: changes.length, sessionID: this.sessionID });
     } catch (error) {
-      this.isWriting = false;
+      if (error instanceof StateSyncError) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       throw new StateSyncError(`Failed to write state: ${message}`, 'write');
     } finally {
@@ -166,37 +225,219 @@ export class StateSync {
   }
 
   /**
-   * Read state from file
+   * Validates state file data structure
+   * @param data - Data to validate
+   * @returns Validation result with error if invalid
+   */
+  private validateStateData(data: unknown): { valid: boolean; error?: string } {
+    if (!data || typeof data !== 'object') {
+      return { valid: false, error: 'State data must be an object' };
+    }
+
+    const stateData = data as Record<string, unknown>;
+
+    // Check version
+    if (!stateData.version || typeof stateData.version !== 'string') {
+      return { valid: false, error: 'Missing or invalid version field' };
+    }
+
+    // Check timestamp
+    if (typeof stateData.timestamp !== 'number') {
+      return { valid: false, error: 'Missing or invalid timestamp field' };
+    }
+
+    // Check sessionID
+    if (typeof stateData.sessionID !== 'string') {
+      return { valid: false, error: 'Missing or invalid sessionID field' };
+    }
+
+    // Check changes array
+    if (!Array.isArray(stateData.changes)) {
+      return { valid: false, error: 'Missing or invalid changes array' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Creates a backup of the current state file
+   * @returns Path to backup file or null if no state file
+   */
+  private async backupCorruptedState(): Promise<string | null> {
+    if (!existsSync(this.statePath)) {
+      return null;
+    }
+
+    try {
+      const backupPath = `${this.statePath}.corrupted.${Date.now()}.bak`;
+      const content = await this.readFileAsync(this.statePath, 'utf-8');
+      await this.writeFileAsync(backupPath, content);
+      logger.warn('Corrupted state file backed up', { backupPath });
+      return backupPath;
+    } catch (error) {
+      logger.error('Failed to backup corrupted state', { error });
+      return null;
+    }
+  }
+
+  /**
+   * Attempts to recover from corrupted state file
+   * @returns Recovered changes or empty array
+   */
+  private async attemptRecovery(): Promise<PendingChange[]> {
+    logger.warn('Attempting to recover from corrupted state file');
+
+    // Strategy 1: Try to read and fix malformed JSON
+    try {
+      const content = await this.readFileAsync(this.statePath, 'utf-8');
+
+      // Try to extract valid JSON objects from the content
+      const changes: PendingChange[] = [];
+      const changeRegex = /\{[\s\S]*?"id"[\s\S]*?\}/g;
+      const matches = content.match(changeRegex);
+
+      if (matches) {
+        for (const match of matches) {
+          try {
+            const changeData = JSON.parse(match);
+            if (changeData.id) {
+              const change = PendingChange.fromJSON(changeData);
+              changes.push(change);
+            }
+          } catch {
+            // Skip invalid change data
+          }
+        }
+      }
+
+      if (changes.length > 0) {
+        logger.info('Recovered changes from corrupted state', { count: changes.length });
+        return changes;
+      }
+    } catch (error) {
+      logger.error('Recovery strategy 1 failed', { error });
+    }
+
+      // Strategy 2: Check for backup files
+      try {
+        const stateFileName = basename(this.statePath);
+        const backupPattern = new RegExp(`^${stateFileName}\\.corrupted\\.(\\d+)\\.bak$`);
+        logger.debug('Looking for backup files with pattern', { pattern: backupPattern.source });
+      } catch (error) {
+        logger.error('Recovery strategy 2 failed', { error });
+      }
+
+    logger.warn('Could not recover any changes from corrupted state');
+    return [];
+  }
+
+  /**
+   * Read state from file with comprehensive corruption handling
    *
    * @returns Array of pending changes, or empty array if file doesn't exist
-   * @throws StateSyncError if read fails or data is corrupted
+   * @throws StateSyncError if read fails and recovery is not possible
    */
   async readState(): Promise<PendingChange[]> {
     try {
       if (!existsSync(this.statePath)) {
-        this.log('State file not found, returning empty array');
+        logger.debug('State file not found, returning empty array');
         return [];
       }
 
-      const content = await this.readFileAsync(this.statePath, 'utf-8');
-      const data = JSON.parse(content) as StateFileData;
+      let content: string;
+      try {
+        content = await this.readFileAsync(this.statePath, 'utf-8');
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException;
+        logger.error('Failed to read state file', { error: nodeError.message, code: nodeError.code });
+
+        if (nodeError.code === 'EACCES' || nodeError.code === 'EPERM') {
+          throw new StateSyncError(
+            `Permission denied reading state file: ${nodeError.message}`,
+            'read'
+          );
+        } else if (nodeError.code === 'ENOENT') {
+          // File was deleted between existsSync and readFile
+          return [];
+        }
+
+        throw new StateSyncError(`Failed to read state file: ${nodeError.message}`, 'read');
+      }
+
+      // Check for empty file
+      if (!content || content.trim() === '') {
+        logger.warn('State file is empty');
+        return [];
+      }
+
+      // Parse JSON
+      let data: unknown;
+      try {
+        data = JSON.parse(content);
+      } catch (parseError) {
+        logger.error('State file JSON parse error', { error: (parseError as Error).message });
+
+        // Backup corrupted file before attempting recovery
+        await this.backupCorruptedState();
+
+        // Attempt recovery
+        const recovered = await this.attemptRecovery();
+
+        if (recovered.length > 0) {
+          // Write recovered state
+          await this.writeState(recovered);
+          return recovered;
+        }
+
+        throw new StateSyncError(
+          `Corrupted state file: ${(parseError as Error).message}. Recovery failed.`,
+          'read'
+        );
+      }
+
+      // Validate structure
+      const validation = this.validateStateData(data);
+      if (!validation.valid) {
+        logger.error('State file validation failed', { error: validation.error });
+        await this.backupCorruptedState();
+        throw new StateSyncError(`Invalid state file structure: ${validation.error}`, 'read');
+      }
+
+      const stateData = data as StateFileData;
 
       // Validate version
-      if (data.version !== STATE_VERSION) {
-        throw new Error(`Unsupported state version: ${data.version}. Expected: ${STATE_VERSION}`);
+      if (stateData.version !== STATE_VERSION) {
+        logger.error('State file version mismatch', {
+          fileVersion: stateData.version,
+          expectedVersion: STATE_VERSION,
+        });
+        // Graceful degradation: return empty array for unsupported version
+        return [];
       }
 
-      // Validate required fields
-      if (!Array.isArray(data.changes)) {
-        throw new Error('Invalid state file: changes must be an array');
+      // Validate and deserialize changes
+      const changes: PendingChange[] = [];
+      const errors: string[] = [];
+
+      for (let i = 0; i < stateData.changes.length; i++) {
+        try {
+          const change = PendingChange.fromJSON(stateData.changes[i]);
+          changes.push(change);
+        } catch (error) {
+          errors.push(`Change ${i}: ${(error as Error).message}`);
+        }
       }
 
-      // Deserialize changes
-      const changes = data.changes.map((changeData: unknown) =>
-        PendingChange.fromJSON(changeData)
-      );
+      if (errors.length > 0) {
+        logger.warn('Some changes failed to deserialize', { errors, total: stateData.changes.length });
+      }
 
-      this.log('State read successfully:', changes.length, 'changes');
+      logger.info('State read successfully', {
+        changesCount: changes.length,
+        errorsCount: errors.length,
+        version: stateData.version,
+      });
+
       return changes;
     } catch (error) {
       if (error instanceof StateSyncError) {

@@ -1,0 +1,47 @@
+{
+  "_comment": "OpenCode Diff Plugin Configuration - VSCode-only Mode Example",
+  "_docs": "https://github.com/AliHadiOzturk/opencode-diff-plugin/blob/main/docs/migration.md",
+
+  "enabled": true,
+
+  "mode": "vscode-only",
+
+  "vscodeOnly": {
+    "applyImmediately": false,
+    "backupOriginals": true,
+    "notificationOnChange": true,
+    "maxPendingAgeHours": 24,
+    "fallbackToTuiIfVsCodeClosed": true,
+    "maxBackupSizeBytes": 104857600
+  },
+
+  "ide": {
+    "enabled": true,
+    "stateFilePath": ".opencode/.diff-plugin-state.json"
+  },
+
+  "autoAccept": [
+    "*.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb"
+  ],
+
+  "autoReject": [
+    "*.min.js",
+    "*.min.css",
+    "dist/**",
+    "node_modules/**"
+  ],
+
+  "maxFileSize": 1048576,
+
+  "theme": "auto",
+
+  "showLineNumbers": true,
+
+  "confirmRejectAll": true,
+
+  "keybindings": []
+}

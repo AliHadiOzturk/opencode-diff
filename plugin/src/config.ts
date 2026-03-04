@@ -32,6 +32,24 @@ export interface IDEConfig {
 }
 
 /**
+ * VSCode-only mode configuration
+ */
+export interface VSCodeOnlyConfig {
+  /** Whether to apply changes immediately without TUI */
+  applyImmediately: boolean;
+  /** Whether to backup original files before applying changes */
+  backupOriginals: boolean;
+  /** Whether to show notifications when changes are applied */
+  notificationOnChange: boolean;
+  /** Maximum age in hours for pending changes before auto-cleanup */
+  maxPendingAgeHours: number;
+  /** Whether to fallback to TUI if VSCode is not available */
+  fallbackToTuiIfVsCodeClosed: boolean;
+  /** Maximum backup size in bytes (0 = unlimited) */
+  maxBackupSizeBytes: number;
+}
+
+/**
  * Plugin configuration interface
  */
 export interface PluginConfig {
@@ -53,6 +71,10 @@ export interface PluginConfig {
   keybindings: KeybindingConfig[];
   /** IDE integration configuration */
   ide?: IDEConfig;
+  /** Diff viewer mode: 'tui' (terminal UI), 'vscode-only' (VSCode extension), or 'auto' (auto-detect) */
+  mode?: 'tui' | 'vscode-only' | 'auto';
+  /** VSCode-only mode configuration */
+  vscodeOnly?: VSCodeOnlyConfig;
 }
 
 /**
@@ -70,6 +92,15 @@ export const DEFAULT_CONFIG: PluginConfig = {
   ide: {
     enabled: false,
     stateFilePath: '.opencode/.diff-plugin-state.json',
+  },
+  mode: 'tui',
+  vscodeOnly: {
+    applyImmediately: false,
+    backupOriginals: true,
+    notificationOnChange: true,
+    maxPendingAgeHours: 24,
+    fallbackToTuiIfVsCodeClosed: true,
+    maxBackupSizeBytes: 100 * 1024 * 1024, // 100MB
   },
 };
 
@@ -149,6 +180,15 @@ export class ConfigManager {
       ide: {
         enabled: loaded.ide?.enabled ?? DEFAULT_CONFIG.ide!.enabled,
         stateFilePath: loaded.ide?.stateFilePath ?? DEFAULT_CONFIG.ide!.stateFilePath,
+      },
+      mode: loaded.mode ?? DEFAULT_CONFIG.mode!,
+      vscodeOnly: {
+        applyImmediately: loaded.vscodeOnly?.applyImmediately ?? DEFAULT_CONFIG.vscodeOnly!.applyImmediately,
+        backupOriginals: loaded.vscodeOnly?.backupOriginals ?? DEFAULT_CONFIG.vscodeOnly!.backupOriginals,
+        notificationOnChange: loaded.vscodeOnly?.notificationOnChange ?? DEFAULT_CONFIG.vscodeOnly!.notificationOnChange,
+        maxPendingAgeHours: loaded.vscodeOnly?.maxPendingAgeHours ?? DEFAULT_CONFIG.vscodeOnly!.maxPendingAgeHours,
+        fallbackToTuiIfVsCodeClosed: loaded.vscodeOnly?.fallbackToTuiIfVsCodeClosed ?? DEFAULT_CONFIG.vscodeOnly!.fallbackToTuiIfVsCodeClosed,
+        maxBackupSizeBytes: loaded.vscodeOnly?.maxBackupSizeBytes ?? DEFAULT_CONFIG.vscodeOnly!.maxBackupSizeBytes,
       },
     };
   }
@@ -244,6 +284,39 @@ export class ConfigManager {
         }
         if (this.config.ide.stateFilePath !== undefined && typeof this.config.ide.stateFilePath !== 'string') {
           errors.push('ide.stateFilePath must be a string');
+        }
+      }
+    }
+
+    // Validate mode
+    if (this.config.mode !== undefined) {
+      if (!['tui', 'vscode-only', 'auto'].includes(this.config.mode)) {
+        errors.push('mode must be "tui", "vscode-only", or "auto"');
+      }
+    }
+
+    // Validate vscodeOnly config
+    if (this.config.vscodeOnly !== undefined) {
+      if (typeof this.config.vscodeOnly !== 'object' || this.config.vscodeOnly === null) {
+        errors.push('vscodeOnly must be an object');
+      } else {
+        if (this.config.vscodeOnly.applyImmediately !== undefined && typeof this.config.vscodeOnly.applyImmediately !== 'boolean') {
+          errors.push('vscodeOnly.applyImmediately must be a boolean');
+        }
+        if (this.config.vscodeOnly.backupOriginals !== undefined && typeof this.config.vscodeOnly.backupOriginals !== 'boolean') {
+          errors.push('vscodeOnly.backupOriginals must be a boolean');
+        }
+        if (this.config.vscodeOnly.notificationOnChange !== undefined && typeof this.config.vscodeOnly.notificationOnChange !== 'boolean') {
+          errors.push('vscodeOnly.notificationOnChange must be a boolean');
+        }
+        if (this.config.vscodeOnly.maxPendingAgeHours !== undefined && (typeof this.config.vscodeOnly.maxPendingAgeHours !== 'number' || this.config.vscodeOnly.maxPendingAgeHours < 0)) {
+          errors.push('vscodeOnly.maxPendingAgeHours must be a non-negative number');
+        }
+        if (this.config.vscodeOnly.fallbackToTuiIfVsCodeClosed !== undefined && typeof this.config.vscodeOnly.fallbackToTuiIfVsCodeClosed !== 'boolean') {
+          errors.push('vscodeOnly.fallbackToTuiIfVsCodeClosed must be a boolean');
+        }
+        if (this.config.vscodeOnly.maxBackupSizeBytes !== undefined && (typeof this.config.vscodeOnly.maxBackupSizeBytes !== 'number' || this.config.vscodeOnly.maxBackupSizeBytes < 0)) {
+          errors.push('vscodeOnly.maxBackupSizeBytes must be a non-negative number');
         }
       }
     }
@@ -375,6 +448,22 @@ export class ConfigManager {
    */
   getConfigPath(): string {
     return this.configPath;
+  }
+
+  /**
+   * Get the diff viewer mode
+   * @returns The current mode: 'tui', 'vscode-only', or 'auto'
+   */
+  getMode(): 'tui' | 'vscode-only' | 'auto' {
+    return this.config.mode!;
+  }
+
+  /**
+   * Get the VSCode-only mode configuration
+   * @returns The VSCode-only configuration object
+   */
+  getVSCodeOnlyConfig(): VSCodeOnlyConfig {
+    return { ...this.config.vscodeOnly! };
   }
 
   /**
